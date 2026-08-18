@@ -1,0 +1,7 @@
+"-specs=E:/Projects-E/mcu/esp32-lightgame/.pio/build/esp32dev/bootloader/specs/picolibc.specs"
+-Wno-frame-address
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero
+-fno-rtti
