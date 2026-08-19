@@ -1,0 +1,18 @@
+dependencies:
+  espressif/led_strip:
+    dependencies:
+    - name: idf
+      version: '>=4.4'
+    source:
+      path: E:\Projects-E\mcu\esp32-lightgame\managed_components\espressif__led_strip
+      type: local
+    version: 2.5.5
+  idf:
+    source:
+      type: idf
+    version: 6.0.1
+direct_dependencies:
+- espressif/led_strip
+manifest_hash: eb4cfd26f53e3523dacbf2ab92e6ba7b72f05a9d7ba4e034dc0214df9594d301
+target: esp32
+version: 2.0.0

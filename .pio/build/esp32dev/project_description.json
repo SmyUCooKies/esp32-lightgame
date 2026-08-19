@@ -2005,8 +2005,8 @@
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__led_strip" ],
             "file": "E:/Projects-E/mcu/esp32-lightgame/.pio/build/esp32dev/esp-idf/src/libsrc.a",
-            "sources": [ "E:/Projects-E/mcu/esp32-lightgame/src/main.c", "E:/Projects-E/mcu/esp32-lightgame/src/game.c", "E:/Projects-E/mcu/esp32-lightgame/src/leds.c", "E:/Projects-E/mcu/esp32-lightgame/src/buttons.c", "E:/Projects-E/mcu/esp32-lightgame/src/web_server.c" ],
-            "include_dirs": [ "../include" ]
+            "sources": [ "E:/Projects-E/mcu/esp32-lightgame/src/main.c", "E:/Projects-E/mcu/esp32-lightgame/src/sim.c", "E:/Projects-E/mcu/esp32-lightgame/src/sweep.c", "E:/Projects-E/mcu/esp32-lightgame/src/present.c", "E:/Projects-E/mcu/esp32-lightgame/src/leds.c", "E:/Projects-E/mcu/esp32-lightgame/src/buttons.c", "E:/Projects-E/mcu/esp32-lightgame/src/web_server.c", "E:/Projects-E/mcu/esp32-lightgame/src/persist.c", "E:/Projects-E/mcu/esp32-lightgame/src/cmdq.c" ],
+            "include_dirs": [ ".", "../include" ]
         },
         "tcp_transport": {
             "alias": "idf::tcp_transport",
@@ -3946,7 +3946,7 @@
             "priv_reqs": [ "espressif__led_strip" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__led_strip" ],
-            "include_dirs": [ "../include" ]
+            "include_dirs": [ ".", "../include" ]
         },
         "espressif__led_strip": {
             "alias": "idf::espressif__led_strip",

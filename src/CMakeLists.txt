@@ -1,11 +1,15 @@
 idf_component_register(
     SRCS
         "main.c"
-        "game.c"
+        "sim.c"
+        "sweep.c"
+        "present.c"
         "leds.c"
         "buttons.c"
         "web_server.c"
-    INCLUDE_DIRS "../include"
+        "persist.c"
+        "cmdq.c"
+    INCLUDE_DIRS "." "../include"
     REQUIRES
         nvs_flash
         esp_wifi

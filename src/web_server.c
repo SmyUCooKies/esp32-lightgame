@@ -7,7 +7,8 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 
-#include "game.h"
+#include "cmdq.h"
+#include "sim.h"
 
 static const char *TAG = "web";
 
@@ -37,23 +38,26 @@ static const char INDEX_HTML[] =
     "input[type=range]{width:100%}"
     ".strip-preview{display:flex;gap:2px;height:28px;margin-top:12px;border-radius:6px;overflow:hidden;background:#12151c;padding:4px}"
     ".strip-preview div{flex:1;border-radius:2px;background:#222}"
+    "kbd{background:#252936;border-radius:4px;padding:1px 6px;font-size:.8rem}"
     "</style></head><body>"
-    "<h1>Light Strip Shooter</h1>"
-    "<p class=\"sub\">Arcade mode works offline. This page adds stats and controls.</p>"
+    "<h1>Light strip shooter</h1>"
+    "<p class=\"sub\">Arcade mode works offline. Keys <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> or "
+    "<kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> shoot. <kbd>Space</kbd> pauses.</p>"
     "<div class=\"grid\">"
     "<div class=\"card\"><h2>Game</h2>"
     "<div class=\"stat\"><span>Phase</span><span class=\"phase\" id=\"phase\">-</span></div>"
     "<div class=\"stat\"><span>Score</span><span id=\"score\">0</span></div>"
     "<div class=\"stat\"><span>High score</span><span id=\"high\">0</span></div>"
+    "<div class=\"stat\"><span>Combo</span><span id=\"combo\">0</span></div>"
     "<div class=\"stat\"><span>Enemy speed</span><span id=\"espeed\">-</span></div>"
     "<div class=\"stat\"><span>Spawn interval</span><span id=\"spawn\">-</span></div>"
     "<div class=\"stat\"><span>Active enemies</span><span id=\"enemies\">0</span></div>"
     "<div class=\"stat\"><span>Active bullets</span><span id=\"bullets\">0</span></div>"
     "<div class=\"strip-preview\" id=\"preview\"></div>"
     "<div class=\"btns\">"
-    "<button class=\"red\" onclick=\"shoot(0)\">Shoot Red</button>"
-    "<button class=\"green\" onclick=\"shoot(1)\">Shoot Green</button>"
-    "<button class=\"blue\" onclick=\"shoot(2)\">Shoot Blue</button>"
+    "<button class=\"red\" onclick=\"shoot(0)\">Shoot red</button>"
+    "<button class=\"green\" onclick=\"shoot(1)\">Shoot green</button>"
+    "<button class=\"blue\" onclick=\"shoot(2)\">Shoot blue</button>"
     "</div>"
     "<div class=\"btns\">"
     "<button class=\"ctrl primary\" onclick=\"action('start')\">Start</button>"
@@ -63,13 +67,15 @@ static const char INDEX_HTML[] =
     "</div></div>"
     "<div class=\"card\"><h2>Settings</h2>"
     "<label>LED count (<span id=\"lcv\">30</span>)</label>"
-    "<input type=\"range\" id=\"led_count\" min=\"10\" max=\"60\" value=\"30\" oninput=\"lcv.textContent=this.value\">"
+    "<input type=\"range\" id=\"led_count\" min=\"10\" max=\"60\" value=\"30\">"
     "<label>Brightness (<span id=\"bvv\">64</span>)</label>"
-    "<input type=\"range\" id=\"brightness\" min=\"10\" max=\"255\" value=\"64\" oninput=\"bvv.textContent=this.value\">"
+    "<input type=\"range\" id=\"brightness\" min=\"10\" max=\"255\" value=\"64\">"
     "<label>Base enemy speed (<span id=\"esv\">2.0</span>)</label>"
-    "<input type=\"range\" id=\"enemy_speed\" min=\"5\" max=\"80\" value=\"20\" oninput=\"esv.textContent=(this.value/10).toFixed(1)\">"
+    "<input type=\"range\" id=\"enemy_speed\" min=\"5\" max=\"80\" value=\"20\">"
+    "<label>Bullet speed (<span id=\"bsv\">24.0</span>)</label>"
+    "<input type=\"range\" id=\"bullet_speed\" min=\"50\" max=\"400\" value=\"240\">"
     "<label>Spawn interval ms (<span id=\"spv\">2500</span>)</label>"
-    "<input type=\"range\" id=\"spawn_interval\" min=\"600\" max=\"5000\" step=\"100\" value=\"2500\" oninput=\"spv.textContent=this.value\">"
+    "<input type=\"range\" id=\"spawn_interval\" min=\"600\" max=\"5000\" step=\"100\" value=\"2500\">"
     "<button class=\"ctrl primary\" style=\"margin-top:16px\" onclick=\"saveSettings()\">Save settings</button>"
     "</div>"
     "<div class=\"card\"><h2>Hardware</h2>"
@@ -78,11 +84,24 @@ static const char INDEX_HTML[] =
     "<div class=\"stat\"><span>Green button</span><span>GPIO 12</span></div>"
     "<div class=\"stat\"><span>Blue button</span><span>GPIO 14</span></div>"
     "<div class=\"stat\"><span>Strip power</span><span>5V + GND</span></div>"
-    "<p class=\"sub\" style=\"margin-top:12px\">Press any color button to start or restart without the web UI.</p>"
+    "<p class=\"sub\" style=\"margin-top:12px\">Press any color button to start without this page.</p>"
     "</div></div>"
     "<script>"
-    "const phaseNames=['Idle','Playing','Paused','Game Over'];"
-    "const colors=['rgb(198,40,40)','rgb(46,125,50)','rgb(21,101,192)'];"
+    "const phaseNames=['Idle','Playing','Paused','Game over'];"
+    "let lastPhase=0,dragging=false;"
+    "const sliderIds=['led_count','brightness','enemy_speed','bullet_speed','spawn_interval'];"
+    "sliderIds.forEach(id=>{"
+    "const el=document.getElementById(id);"
+    "el.addEventListener('pointerdown',()=>dragging=true);"
+    "el.addEventListener('touchstart',()=>dragging=true,{passive:true});"
+    "});"
+    "window.addEventListener('pointerup',()=>dragging=false);"
+    "window.addEventListener('touchend',()=>dragging=false);"
+    "led_count.addEventListener('input',()=>lcv.textContent=led_count.value);"
+    "brightness.addEventListener('input',()=>bvv.textContent=brightness.value);"
+    "enemy_speed.addEventListener('input',()=>esv.textContent=(enemy_speed.value/10).toFixed(1));"
+    "bullet_speed.addEventListener('input',()=>bsv.textContent=(bullet_speed.value/10).toFixed(1));"
+    "spawn_interval.addEventListener('input',()=>spv.textContent=spawn_interval.value);"
     "async function api(path,method,body){"
     "const o={method};if(body){o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(body);}"
     "return fetch(path,o);}"
@@ -91,39 +110,58 @@ static const char INDEX_HTML[] =
     "async function saveSettings(){"
     "await api('/api/settings','POST',{"
     "led_count:+led_count.value,brightness:+brightness.value,"
-    "enemy_speed:+enemy_speed.value/10,spawn_interval_ms:+spawn_interval.value});refresh();}"
+    "enemy_speed:+enemy_speed.value/10,bullet_speed:+bullet_speed.value/10,"
+    "spawn_interval_ms:+spawn_interval.value});refresh();}"
+    "function sliderBusy(){"
+    "if(dragging)return true;"
+    "const ae=document.activeElement;"
+    "return ae&&ae.tagName==='INPUT'&&ae.type==='range';}"
     "function renderPreview(d){"
     "const p=document.getElementById('preview');p.innerHTML='';"
-    "const n=d.settings.led_count;for(let i=0;i<n;i++){"
+    "const hex=d.px||'';const n=d.settings.led_count;"
+    "for(let i=0;i<n;i++){"
     "const el=document.createElement('div');"
-    "const e=d.enemies.find(x=>x.active&&Math.round(x.pos)===i);"
-    "const b=d.bullets.find(x=>x.active&&Math.round(x.pos)===i);"
-    "if(e)el.style.background=colors[e.color];else if(b)el.style.background='#fff';"
-    "else if(i===0)el.style.background='#444';p.appendChild(el);}}"
+    "const o=i*6;"
+    "if(hex.length>=o+6)el.style.background='#'+hex.substr(o,6);"
+    "p.appendChild(el);}}"
     "async function refresh(){"
     "const r=await fetch('/api/state');const d=await r.json();"
-    "phase.textContent=phaseNames[d.phase];score.textContent=d.score;high.textContent=d.high_score;"
-    "espeed.textContent=d.current_enemy_speed.toFixed(1)+' LEDs/s';"
-    "spawn.textContent=d.current_spawn_interval_ms+' ms';"
+    "lastPhase=d.phase;"
+    "phase.textContent=phaseNames[d.phase]||d.phase_name;"
+    "score.textContent=d.score;high.textContent=d.high_score;combo.textContent=d.combo||0;"
+    "espeed.textContent=d.enemy_speed.toFixed(1)+' LEDs/s';"
+    "spawn.textContent=d.spawn_interval_ms+' ms';"
     "enemies.textContent=d.enemy_count;bullets.textContent=d.bullet_count;"
+    "if(!sliderBusy()){"
     "led_count.value=d.settings.led_count;lcv.textContent=d.settings.led_count;"
     "brightness.value=d.settings.brightness;bvv.textContent=d.settings.brightness;"
     "enemy_speed.value=Math.round(d.settings.enemy_speed*10);esv.textContent=d.settings.enemy_speed.toFixed(1);"
-    "spawn_interval.value=d.settings.spawn_interval_ms;spv.textContent=d.settings.spawn_interval_ms;"
+    "bullet_speed.value=Math.round(d.settings.bullet_speed*10);bsv.textContent=d.settings.bullet_speed.toFixed(1);"
+    "spawn_interval.value=d.settings.spawn_interval_ms;spv.textContent=d.settings.spawn_interval_ms;}"
     "renderPreview(d);}"
+    "document.addEventListener('keydown',e=>{"
+    "if(e.repeat)return;"
+    "if(e.code==='Space'){"
+    "e.preventDefault();"
+    "if(lastPhase===1)action('pause');"
+    "else if(lastPhase===2)action('resume');"
+    "return;}"
+    "const map={Digit1:0,Digit2:1,Digit3:2,KeyZ:0,KeyX:1,KeyC:2};"
+    "if(map[e.code]!==undefined)shoot(map[e.code]);"
+    "});"
     "refresh();setInterval(refresh,200);"
     "</script></body></html>";
 
-static const char *phase_name(game_phase_t p)
+static const char *phase_name(sim_phase_t p)
 {
     switch (p) {
-    case GAME_PHASE_IDLE:
+    case SIM_PHASE_IDLE:
         return "idle";
-    case GAME_PHASE_PLAYING:
+    case SIM_PHASE_PLAYING:
         return "playing";
-    case GAME_PHASE_PAUSED:
+    case SIM_PHASE_PAUSED:
         return "paused";
-    case GAME_PHASE_GAME_OVER:
+    case SIM_PHASE_GAME_OVER:
         return "game_over";
     default:
         return "unknown";
@@ -191,63 +229,40 @@ static esp_err_t handle_index(httpd_req_t *req)
 
 static esp_err_t handle_state(httpd_req_t *req)
 {
-    char *json = malloc(3072);
+    const size_t cap = 4096;
+    char *json = malloc(cap);
     if (!json) {
         return ESP_FAIL;
     }
 
-    game_t *g = game_lock();
-
-    int enemy_count = 0;
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (g->enemies[i].active) {
-            enemy_count++;
-        }
-    }
-    int bullet_count = 0;
-    for (int i = 0; i < MAX_BULLETS; i++) {
-        if (g->bullets[i].active) {
-            bullet_count++;
-        }
-    }
+    sim_snapshot_t snap;
+    snapshot_copy(&snap);
 
     int written = snprintf(
-        json, 3072,
-        "{\"phase\":%d,\"phase_name\":\"%s\",\"score\":%d,\"high_score\":%d,"
-        "\"current_enemy_speed\":%.2f,\"current_spawn_interval_ms\":%lu,"
-        "\"settings\":{\"led_count\":%u,\"brightness\":%u,\"enemy_speed\":%.2f,"
+        json, cap,
+        "{\"phase\":%d,\"phase_name\":\"%s\",\"score\":%d,\"high_score\":%d,\"combo\":%d,"
+        "\"enemy_speed\":%.2f,\"spawn_interval_ms\":%lu,\"controls\":%lu,\"near_base\":%u,"
+        "\"leak_color\":%d,\"settings\":{\"led_count\":%u,\"brightness\":%u,\"enemy_speed\":%.2f,"
         "\"bullet_speed\":%.2f,\"spawn_interval_ms\":%lu},"
-        "\"enemy_count\":%d,\"bullet_count\":%d,\"enemies\":[",
-        g->phase, phase_name(g->phase), g->score, g->high_score, g->current_enemy_speed,
-        (unsigned long)g->current_spawn_interval_ms, g->settings.led_count, g->settings.brightness,
-        g->settings.enemy_speed, g->settings.bullet_speed,
-        (unsigned long)g->settings.spawn_interval_ms, enemy_count, bullet_count);
+        "\"enemy_count\":%u,\"bullet_count\":%u,\"px\":\"",
+        (int)snap.phase, phase_name(snap.phase), snap.score, snap.high_score, snap.combo,
+        snap.enemy_speed, (unsigned long)snap.spawn_interval_ms, (unsigned long)snap.controls,
+        snap.near_base, (int)snap.leak_color, snap.settings.led_count, snap.settings.brightness,
+        snap.settings.enemy_speed, snap.settings.bullet_speed,
+        (unsigned long)snap.settings.spawn_interval_ms, snap.enemy_count, snap.bullet_count);
 
-    int enemy_written = 0;
-    for (int i = 0; i < MAX_ENEMIES && written < 2900; i++) {
-        if (!g->enemies[i].active) {
-            continue;
-        }
-        enemy_written++;
-        written += snprintf(json + written, 3072 - written, "%s{\"pos\":%.2f,\"color\":%d,\"active\":true}",
-                            enemy_written == 1 ? "" : ",", g->enemies[i].pos, g->enemies[i].color);
+    uint16_t n = snap.led_count;
+    if (n > LED_STRIP_MAX_COUNT) {
+        n = LED_STRIP_MAX_COUNT;
     }
-
-    written += snprintf(json + written, 3072 - written, "],\"bullets\":[");
-
-    int bullet_written = 0;
-    for (int i = 0; i < MAX_BULLETS && written < 3000; i++) {
-        if (!g->bullets[i].active) {
-            continue;
-        }
-        bullet_written++;
-        written += snprintf(json + written, 3072 - written, "%s{\"pos\":%.2f,\"color\":%d,\"active\":true}",
-                            bullet_written == 1 ? "" : ",", g->bullets[i].pos, g->bullets[i].color);
+    for (uint16_t i = 0; i < n && written + 8 < (int)cap; i++) {
+        written += snprintf(json + written, cap - (size_t)written, "%02x%02x%02x", snap.pixels[i].r,
+                            snap.pixels[i].g, snap.pixels[i].b);
     }
-
-    written += snprintf(json + written, 3072 - written, "]}");
-
-    game_unlock();
+    if (written + 3 < (int)cap) {
+        written += snprintf(json + written, cap - (size_t)written, "\"}");
+    }
+    (void)written;
 
     httpd_resp_set_type(req, "application/json");
     esp_err_t err = httpd_resp_sendstr(req, json);
@@ -270,22 +285,37 @@ static esp_err_t handle_action(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    sim_cmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    bool ok = true;
     if (strcmp(action, "shoot") == 0) {
         int color = json_find_int(buf, "color", -1);
-        if (color >= 0 && color < GAME_COLOR_COUNT) {
-            game_shoot((game_color_t)color);
+        if (color >= 0 && color < SIM_COLOR_COUNT) {
+            cmd = sim_cmd_shoot((sim_color_t)color);
+        } else {
+            ok = false;
         }
     } else if (strcmp(action, "start") == 0) {
-        game_start();
+        cmd = sim_cmd_start();
     } else if (strcmp(action, "pause") == 0) {
-        game_pause();
+        cmd = sim_cmd_set_paused(true);
     } else if (strcmp(action, "resume") == 0) {
-        game_resume();
+        cmd = sim_cmd_set_paused(false);
     } else if (strcmp(action, "reset") == 0) {
-        game_reset();
+        cmd = sim_cmd_reset();
+    } else {
+        ok = false;
     }
-
     free(action);
+
+    if (!ok) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad action");
+        return ESP_FAIL;
+    }
+    if (!cmdq_push(cmd)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "busy");
+        return ESP_FAIL;
+    }
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
@@ -299,13 +329,19 @@ static esp_err_t handle_settings(httpd_req_t *req)
     }
     buf[len] = '\0';
 
-    game_settings_t s = *game_get_settings();
+    sim_snapshot_t snap;
+    snapshot_copy(&snap);
+    sim_settings_t s = snap.settings;
     s.led_count = (uint16_t)json_find_int(buf, "led_count", s.led_count);
     s.brightness = (uint8_t)json_find_int(buf, "brightness", s.brightness);
     s.enemy_speed = json_find_float(buf, "enemy_speed", s.enemy_speed);
-    s.spawn_interval_ms = (uint32_t)json_find_int(buf, "spawn_interval_ms", s.spawn_interval_ms);
+    s.bullet_speed = json_find_float(buf, "bullet_speed", s.bullet_speed);
+    s.spawn_interval_ms = (uint32_t)json_find_int(buf, "spawn_interval_ms", (int)s.spawn_interval_ms);
 
-    game_update_settings(&s);
+    if (!cmdq_push(sim_cmd_set_settings(s))) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "busy");
+        return ESP_FAIL;
+    }
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
